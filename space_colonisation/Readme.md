@@ -1,4 +1,6 @@
-to run this you will need to have parcel installed globaly.
+# Space Colonisation Algorithm
+
+To run this, you will need to have `parcel` installed globally.
 
 if it is the case than just run:
 
