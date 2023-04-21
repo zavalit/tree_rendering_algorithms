@@ -1,0 +1,10 @@
+{
+  "types": "./types.d.ts",
+  "devDependencies": {
+    "@parcel/transformer-glsl": "2.3.2",
+    "@tweakpane/core": "^1.1.7"
+  },
+  "dependencies": {
+    "tweakpane": "^3.1.8"
+  }
+}
