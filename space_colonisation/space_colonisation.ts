@@ -3,11 +3,12 @@ import {Pane} from 'tweakpane'
 
 
 const PARAMS = {
-    MAX_DIST: 150,
-    MIN_DIST: 30, 
-    SEGMENT_SCALE: 10, 
-    ATTRACTOR_COUNT: 1000,
-    DEBUG: true
+    MAX_DIST: 450,
+    MIN_DIST: 4, 
+    SEGMENT_SCALE: 2, 
+    ATTRACTOR_COUNT: 4000,
+    RENDER_PERCENT: 100,
+    DEBUG: false
 }
 
 {
@@ -19,38 +20,59 @@ const PARAMS = {
     document.body.appendChild(canvas)
     
     const ctx = canvas.getContext('2d')!;
-
     
+    const center = [canvas.width * .5, canvas.height * .45]
+    const rootNode = {
+        x: canvas.width * .5,
+        y: canvas.height
+    }
     class Node {
-        x
-        y
+        x: number
+        y: number
+        index: number
         parent: Node
-        children
+        children: Attractor[]
         normalizedDir
+
+        // node that delegates an attraction to it child nodes
         isAsleep: boolean
+
+        // node that have to be rendered
+        toRender: boolean
         
-        constructor ({x, y}, parent) {
+        constructor ({x, y, index = 0}, parent) {
             this.x = x
             this.y = y
+            this.index = index
             this.parent = parent
             this.children = []
             this.normalizedDir = null
             this.isAsleep = false
+            this.toRender = true
         }
 
-        next({x,y}) {
-            return new Node({x,y}, this)
+        next({x,y, index}) {
+            return new Node({x,y, index}, this)
         }
 
         setAsleep () {
             this.isAsleep = true;
+        }
+
+        setAwake () {
+            this.isAsleep = false;
         }
     }
 
     class Attractor {
         x: number
         y: number
+        
+        // according to spec an attractor that not attract any nodes
         isKilled: boolean
+        // killed to avoid conflicts leeding to dead loop
+        disabled: boolean
+         
         index: number
         distance
         parent: Node
@@ -67,6 +89,11 @@ const PARAMS = {
             this.isKilled = true
         }
 
+        setPrevetiveKilled () {
+            this.disabled = true
+            this.setKilled()
+        }
+
     }
 
     const getDist = (a, b) => Math.sqrt(Math.pow((a.x - b.x), 2) + Math.pow((a.y - b.y), 2))
@@ -74,36 +101,95 @@ const PARAMS = {
     class Tree {
         attractors: Attractor[]
         nodes: Node[]
-
+        idleNodes: Node[]
         constructor(attractors, nodes){
             this.attractors = attractors
             this.nodes = nodes
+            this.idleNodes = []
         }
 
-        static init () {
+        static initFromCenter (center) {
 
-            const center = [canvas.width * .5, canvas.height * .45]
+           
 
             const attractors = [...Array.from(Array(PARAMS.ATTRACTOR_COUNT))].map((_, index) => {
                 const [x, y] = center;
                 return new Attractor({
-                    x: x * (Math.random() * 2.), 
-                    y: y * (Math.random() * 2.),
+                    x: x * (Math.random() * 2), 
+                    y: y * (Math.random() * 2),
+                    // x: x + ((index % 2) - .5) * 100, 
+                    // y: y + index * 30 + 50,
                     index
                 })
             })
                 
-            const nodes = [new Node({
-                    x: canvas.width * .5,
-                    y: canvas.height
-                }, null)];
+            const nodes = [new Node(rootNode, null)];
                 
             return new Tree(attractors, nodes)
             
     
         }
 
-        addNode (nextNode) {
+        addAttractor (attractor: Attractor) {
+            this.attractors.push(attractor)
+            // awake nearest node
+            
+            let nearesNode;
+            let nearestDist = Infinity
+            
+            this.nodes.forEach((node) => {
+                const dist = getDist(node, attractor)
+                if(dist < nearestDist){
+                    nearestDist = dist
+                    nearesNode = node
+                }
+
+            })
+            if(nearesNode && nearesNode.isAsleep) {
+                nearesNode.setAwake()
+            }
+
+        }
+
+        getLastAttractorNodes (attractorsCount = 1) {
+            const attractors: Attractor[] = []
+            const idledNodes: Node[] = []
+            for(let i = this.nodes.length - 1; i>=0; i--){
+                if(attractors.length >= attractorsCount) {
+                    break
+                }
+                if(this.nodes[i].children.length > 0){   
+                    attractors.push(...this.nodes[i].children)                    
+                }
+                idledNodes.push(this.nodes[i])
+
+            }
+            
+
+
+            return idledNodes
+            
+        }
+
+        idleAttractorInTail (size = 1) {
+            if(size == 0 && this.idleNodes.length === 0) return
+                        
+            const idleNodes = this.getLastAttractorNodes(size);
+            if(idleNodes.length < this.idleNodes.length) {
+                this.idleNodes.slice(idleNodes.length).forEach(node => {
+                    node.toRender = true    
+                })
+                
+            } else {
+                idleNodes.forEach(node => {
+                    node.toRender = false
+                })
+           }
+            this.idleNodes = idleNodes
+
+        }
+
+        addNode (nextNode: Node) {
             this.nodes.push(nextNode)
         } 
     }
@@ -114,7 +200,7 @@ const PARAMS = {
 
 
     // Iteratively draw a tree in a canvas
-    const draw = (tree) => {
+    const drawWood = (tree) => {
 
         if(PARAMS.SEGMENT_SCALE > PARAMS.MIN_DIST * 2.) {
             throw Error(`MIN_DIST of ${PARAMS.MIN_DIST} can not be less then a half of SEGMENT_SCALE`)
@@ -143,8 +229,9 @@ const PARAMS = {
             
             activeNodes.forEach((node: Node) => {
                 const dist = getDist(node, attractor)
-
-                if(dist < PARAMS.MIN_DIST + Math.random()){
+                
+                if(dist < PARAMS.MIN_DIST){
+                    console.log('dist < PARAMS.MIN_DIST', dist, attractor)
                     attractor.setKilled()
                     closestNode = undefined
                     return
@@ -178,9 +265,7 @@ const PARAMS = {
                     attractor.distance = closestDist
                     attractor.parent = closestNode
                     closestNode.children.push(attractor)
-                }
-                
-
+                }                
                 
             }            
 
@@ -207,13 +292,12 @@ const PARAMS = {
             if(activeAttractors.length > 1) {
                 activeAttractors.sort((a, b) => a.distance - b.distance)
                 const [a, b] = activeAttractors;
-                if(a.distance - b.distance < PARAMS.SEGMENT_SCALE * .2){
-                    a.setKilled()
+                if(Math.abs(a.distance - b.distance) < PARAMS.SEGMENT_SCALE * .1){
+                    console.log('Math.abs(a.distance - b.distance) < PARAMS.SEGMENT_SCALE * .2', Math.abs(a.distance - b.distance), a, b)
+                    a.setPrevetiveKilled()
                 }    
             }
             
-
-                        
 
             let sumX = 0
             let sumY = 0
@@ -236,7 +320,7 @@ const PARAMS = {
             
             const nextX = node.x + normalisedX * PARAMS.SEGMENT_SCALE
             const nextY = node.y + normalisedY * PARAMS.SEGMENT_SCALE
-            tree.addNode(node.next({x: nextX, y: nextY}))
+            tree.addNode(node.next({x: nextX, y: nextY, index: tree.nodes.length}))
 
         })
 
@@ -244,7 +328,7 @@ const PARAMS = {
         // draw current state
         tree.nodes.forEach((node, i) => {
 
-            if(!node.parent){
+            if(!node.parent || !node.parent.toRender){
                 return
             }
 
@@ -266,6 +350,7 @@ const PARAMS = {
             ctx.moveTo(node.parent.x, node.parent.y)
             ctx.lineTo(node.x, node.y)
             ctx.strokeStyle = 'red'
+            ctx.lineWidth = lerpLineWidth(node)
             ctx.stroke()
         })
 
@@ -274,31 +359,132 @@ const PARAMS = {
 
     }
 
-    const drawFinalTimes = (times = 200) => {
+    const drawLeaves = (tree) => {
+
+        console.log('drawLeaves', tree)
+        tree.attractors.filter(a => !a.disabled && a.parent.isAsleep && a.parent.index > 1 && a.parent.toRender).forEach(a => {
+            drawCanvasLeaf(ctx, a.parent, a)
+        })
+        
+    }
+
+    const drawCanvasLeaf = (ctx, node, attractor) => {
+
+        const {x, y} = attractor
+
+        const leafWidth = 2
+        const cpx = (node.x + x) * .5 + leafWidth
+        const cpy = (node.y + y) * .5 + leafWidth
+        const cpx2 = (node.x + x) * .5 - leafWidth
+        const cpy2 = (node.y + y) * .5 - leafWidth
+
+
+        ctx.beginPath();
+        ctx.moveTo(node.x, node.y)
+        ctx.quadraticCurveTo(cpx, cpy, x, y);
+        ctx.quadraticCurveTo(cpx2, cpy2, node.x, node.y);
+        ctx.fillStyle=("#0f0")
+        ctx.strokeStyle=("#0f0")
+
+        ctx.fill();
+        ctx.stroke()
+        ctx.closePath();        
+    }
+    const lerpLineWidth = (node) => {
+        const dist = getDist(node, rootNode);
+        const parentDist = getDist(node.parent, rootNode) || dist;
+
+        return Math.min(canvas.height/(dist  - .5 * parentDist), 30) 
+        
+        
+    }
+
+    const drawFinalTimes = (times = 300) => {
     
-        const tree = Tree.init()
+        const tree = Tree.initFromCenter(center)
         let t = 0;
         const propagate = () => {
             if(t++ < times){
                 requestAnimationFrame(propagate)
+                drawWood(tree)
+
             }
-            draw(tree)
         }
         
         
         requestAnimationFrame(propagate)
 
         
-    }       
+    }   
+    
+    const drawTimes = (times) => {
+        for(let i =0;i< times; i++){
+            drawWood(tree)
+            
+        }
+
+        drawLeaves(tree)
+    }
 
 
-    drawFinalTimes(100)
 
+    
+    const tree = Tree.initFromCenter(center)
+    drawTimes(300)
+    const testDynamicAttractorsRandom = () => {
+        
+
+        drawTimes(100)
+        tree.idleAttractorInTail(900)
+        drawTimes(1)
+        tree.idleAttractorInTail(200)
+        drawTimes(1)
+    }
+
+    const redraw = () => {
+
+        const idleCount = PARAMS.ATTRACTOR_COUNT * (1. - PARAMS.RENDER_PERCENT * 0.01)        
+        tree.idleAttractorInTail(parseInt(idleCount.toString()))
+        drawTimes(1)
+    }
+    const testDynamicAttractors2 = () => {
+        PARAMS.ATTRACTOR_COUNT = 5
+
+        drawTimes(11)
+        tree.idleAttractorInTail(3)
+        drawTimes(1)
+        tree.idleAttractorInTail(2)
+        drawTimes(1)
+    }
+
+    
+    const testDynamicAttractors = () => {
+        //PARAMS.ATTRACTOR_COUNT = 1
+        drawTimes(3)
+        // add attractor 1
+        //tree.addAttractor(new Attractor({x: canvas.width * .5, y: canvas.height - 50, index: tree.attractors.length}))
+        //tree.addAttractor(new Attractor({x: canvas.width * .5 - 70, y: canvas.height - 70, index: tree.attractors.length}))
+        
+        drawTimes(10)
+        tree.idleAttractorInTail(1)
+        drawTimes(1)
+        //tree.recoverAttractors(0)
+        drawTimes(1)
+    
+        
+        
+    }
+
+    //testDynamicAttractors()
+    //testDynamicAttractors2()    
+    //testDynamicAttractorsRandom()
+    
     const pane = new Pane()
-    pane.addInput(PARAMS, 'MAX_DIST', {min: 70, max: 150, step: 10}).on('change', (ev) => ev.last && drawFinalTimes());
-    pane.addInput(PARAMS, 'MIN_DIST', {min: 3, max: 30}).on('change', (ev) => ev.last && drawFinalTimes());
-    pane.addInput(PARAMS, 'SEGMENT_SCALE', {min: 3, max: 20}).on('change', (ev) => ev.last && drawFinalTimes());
-    pane.addInput(PARAMS, 'ATTRACTOR_COUNT', {min:50, max:4000, step:50}).on('change', (ev) => ev.last && drawFinalTimes());
+    pane.addInput(PARAMS, 'MAX_DIST', {min: 0, max: 450, step: 1}).on('change', (ev) => ev.last && drawFinalTimes());
+    pane.addInput(PARAMS, 'MIN_DIST', {min: 0, max: 100, step:.5}).on('change', (ev) => ev.last && drawFinalTimes());
+    pane.addInput(PARAMS, 'SEGMENT_SCALE', {min: 1, max: 30}).on('change', (ev) => ev.last && drawFinalTimes());
+    pane.addInput(PARAMS, 'ATTRACTOR_COUNT', {min:1, max:4000, step:1}).on('change', (ev) => ev.last && drawFinalTimes());
+    pane.addInput(PARAMS, 'RENDER_PERCENT', {min:0, max:100, step:1}).on('change', (ev) => ev.last && redraw());
     pane.addInput(PARAMS, 'DEBUG').on('change', (ev) => ev.last && drawFinalTimes());
     
 }
